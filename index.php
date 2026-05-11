@@ -547,7 +547,8 @@ tbody tr {
             foreach ($rows as $i => $row):
                 [$expClass, $expLabel] = expiryStatus($row['expiry_date'] ?? '');
                 $icon    = categoryIcon($row['category'] ?? '');
-                $qtyPct  = min(100, round(($row['quantity'] / $maxQty) * 100));
+                $quantities = array_column($rows, 'quantity');
+                $maxQty = !empty($quantities) ? max(max($quantities), 1) : 1;
                 $qtyLow  = $row['quantity'] < 10 ? 'qty-low' : '';
                 $delay   = min($i * 40, 400);
             ?>
