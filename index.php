@@ -1,14 +1,13 @@
 <?php
 include 'db.php';
 
-// XSS-safe search term
+// ══════════════════════════════════════════════════════════════
+//  MAIN PAGE
+// ══════════════════════════════════════════════════════════════
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 
-// Fetch data
 if ($search !== '') {
-    $stmt = $conn->prepare("SELECT * FROM inventory WHERE mname LIKE ? OR category LIKE ? OR supplier LIKE ? ORDER BY id DESC");
-    $like = "%$search%";
-    $stmt->bind_param("sss", $like, $like, $like);
+    $stmt = $conn->prepare("SELECT * FROM inventory ORDER BY id DESC");
     $stmt->execute();
     $result = $stmt->get_result();
 } else {
@@ -20,38 +19,29 @@ while ($row = $result->fetch_assoc()) {
     $rows[] = $row;
 }
 
-// Stats
 $total_items = count($rows);
 $total_qty   = array_sum(array_column($rows, 'quantity'));
 $total_value = array_sum(array_map(fn($r) => $r['price'] * $r['quantity'], $rows));
 
-// Category icon map
 function categoryIcon(string $cat): string {
     $cat = strtolower($cat);
-    if (str_contains($cat, 'analg') || str_contains($cat, 'pain'))    return '🩹';
-    if (str_contains($cat, 'antibi'))                                   return '🦠';
-    if (str_contains($cat, 'vitamin') || str_contains($cat, 'suppl'))  return '💊';
-    if (str_contains($cat, 'antih') || str_contains($cat, 'allerg'))   return '🤧';
-    if (str_contains($cat, 'cardio') || str_contains($cat, 'heart'))   return '❤️';
-    if (str_contains($cat, 'diab'))                                     return '🩸';
-    if (str_contains($cat, 'antac') || str_contains($cat, 'gastro'))   return '🫃';
+    if (str_contains($cat, 'analg') || str_contains($cat, 'pain'))   return '🩹';
+    if (str_contains($cat, 'antibi'))                                  return '🦠';
+    if (str_contains($cat, 'vitamin') || str_contains($cat, 'suppl')) return '💊';
+    if (str_contains($cat, 'antih') || str_contains($cat, 'allerg'))  return '🤧';
+    if (str_contains($cat, 'cardio') || str_contains($cat, 'heart'))  return '❤️';
+    if (str_contains($cat, 'diab'))                                    return '🩸';
+    if (str_contains($cat, 'antac') || str_contains($cat, 'gastro'))  return '🫃';
     return '💉';
 }
 
-// Expiry status
 function expiryStatus(string $date): array {
     if (empty($date)) return ['', ''];
     $diff = (strtotime($date) - time()) / 86400;
-    if ($diff < 0)   return ['expired',  '⚠ Expired'];
-    if ($diff < 30)  return ['near',     '⚠ Expiring soon'];
-    if ($diff < 90)  return ['caution',  '· 3 months'];
+    if ($diff < 0)  return ['expired', '⚠ Expired'];
+    if ($diff < 30) return ['near',    '⚠ Expiring soon'];
+    if ($diff < 90) return ['caution', '· 3 months'];
     return ['ok', ''];
-}
-
-// Check if image file actually exists on disk
-function hasImage(?string $filename): bool {
-    if (empty($filename)) return false;
-    return file_exists('img/' . $filename);
 }
 ?>
 <!DOCTYPE html>
@@ -116,7 +106,6 @@ body {
 }
 .nav-right { display: flex; align-items: center; gap: .75rem; }
 
-/* SEARCH */
 .search-wrap { position: relative; display: flex; align-items: center; }
 .search-icon { position: absolute; left: .85rem; color: var(--ink3); font-size: .95rem; pointer-events: none; }
 #searchInput {
@@ -197,7 +186,7 @@ tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: #f9f8f5; }
 td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
 
-/* MEDICINE CELL */
+/* MEDICINE AVATAR */
 .med-cell { display: flex; align-items: center; gap: .85rem; }
 
 .med-avatar {
@@ -208,40 +197,35 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
     border: 1.5px solid var(--border);
     background: var(--accent-lt);
     display: grid; place-items: center;
-    transition: border-color .2s;
+    transition: border-color .2s, transform .2s;
 }
-.med-avatar.has-img { border-color: rgba(45,106,79,.25); cursor: zoom-in; }
-.med-avatar.has-img:hover { border-color: var(--accent2); }
-
-.med-avatar img {
-    width: 100%; height: 100%;
-    object-fit: cover;
-    display: block;
-    transition: transform .28s ease;
+.med-avatar.has-img {
+    border-color: rgba(45,106,79,.25);
+    cursor: zoom-in;
 }
-.med-avatar.has-img:hover img { transform: scale(1.1); }
-
-/* Zoom overlay on hover */
+.med-avatar.has-img:hover {
+    border-color: var(--accent2);
+    transform: scale(1.06);
+}
 .med-avatar.has-img::after {
     content: '🔍';
     position: absolute; inset: 0;
     background: rgba(45,106,79,.45);
     display: grid; place-items: center;
-    font-size: .9rem;
-    opacity: 0;
+    font-size: .85rem; opacity: 0;
     transition: opacity .2s;
     border-radius: 8px;
 }
 .med-avatar.has-img:hover::after { opacity: 1; }
 
+.med-avatar img {
+    width: 100%; height: 100%;
+    object-fit: cover; display: block;
+}
 .avatar-emoji { font-size: 1.45rem; line-height: 1; user-select: none; }
 
 .med-name { font-weight: 600; color: var(--ink); line-height: 1.3; }
-.med-id   { font-size: .72rem; color: var(--ink3); }
-.med-photo-tag {
-    font-size: .65rem; color: var(--accent2); font-weight: 600;
-    letter-spacing: .02em;
-}
+.med-id   { font-size: .72rem; color: var(--ink3); margin-top: 1px; }
 
 /* CATEGORY */
 .cat-badge {
@@ -258,10 +242,8 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
 .qty-low .qty-bar { background: var(--warn); }
 .qty-num { font-weight: 600; min-width: 28px; }
 
-/* PRICE */
 .price-cell { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700; font-size: .95rem; }
 
-/* EXPIRY */
 .exp-ok      { color: var(--ink2); font-size: .85rem; }
 .exp-near    { color: var(--warn);    font-size: .8rem; font-weight: 600; }
 .exp-expired { color: var(--warn);    font-size: .8rem; font-weight: 700; }
@@ -302,14 +284,11 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
     animation: zoomIn .22s ease;
 }
 #lightbox-caption {
-    position: fixed; bottom: 2.5rem; left: 50%;
-    transform: translateX(-50%);
-    background: rgba(255,255,255,.13);
-    backdrop-filter: blur(10px);
+    position: fixed; bottom: 2.5rem; left: 50%; transform: translateX(-50%);
+    background: rgba(255,255,255,.13); backdrop-filter: blur(10px);
     color: #fff; padding: .6rem 1.5rem;
     border-radius: 100px; font-size: .88rem; font-weight: 600;
-    white-space: nowrap; letter-spacing: .01em;
-    box-shadow: 0 2px 16px rgba(0,0,0,.3);
+    white-space: nowrap; box-shadow: 0 2px 16px rgba(0,0,0,.3);
 }
 #lightbox-close {
     position: fixed; top: 1.5rem; right: 1.75rem;
@@ -449,51 +428,40 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
 
             foreach ($rows as $i => $row):
                 [$expClass, $expLabel] = expiryStatus($row['expiry_date'] ?? '');
-                $icon      = categoryIcon($row['category'] ?? '');
-                $qtyPct    = min(100, round(($row['quantity'] / $maxQty) * 100));
-                $qtyLow    = $row['quantity'] < 10 ? 'qty-low' : '';
-                $delay     = min($i * 40, 400);
-                $imgFile   = $row['image'] ?? '';
-                $imgExists = hasImage($imgFile);
-                $imgSrc    = $imgExists ? 'img/' . htmlspecialchars($imgFile) : '';
-                $medName   = htmlspecialchars($row['mname']);
+                $icon    = categoryIcon($row['category'] ?? '');
+                $qtyPct  = min(100, round(($row['quantity'] / $maxQty) * 100));
+                $qtyLow  = $row['quantity'] < 10 ? 'qty-low' : '';
+                $delay   = min($i * 40, 400);
+                $medName = htmlspecialchars($row['mname']);
+                $medId   = (int)$row['id'];
+                // Check if uploaded image exists
+                $imgPath = !empty($row['image']) ? htmlspecialchars($row['image']) : '';
             ?>
             <tr data-name="<?= htmlspecialchars(strtolower($row['mname'])) ?>"
                 data-cat="<?= htmlspecialchars(strtolower($row['category'])) ?>"
                 data-sup="<?= htmlspecialchars(strtolower($row['supplier'])) ?>"
                 style="animation-delay:<?= $delay ?>ms">
 
-                <td style="color:var(--ink3);font-size:.8rem;font-weight:600"><?= $row['id'] ?></td>
+                <td style="color:var(--ink3);font-size:.8rem;font-weight:600"><?= $medId ?></td>
 
-                <!-- MEDICINE + IMAGE CELL -->
+                <!-- MEDICINE CELL -->
                 <td>
                     <div class="med-cell">
-
-                        <?php if ($imgExists): ?>
-                            <!-- Real image → clickable thumbnail + lightbox -->
-                            <div class="med-avatar has-img"
-                                 onclick="openLightbox('<?= $imgSrc ?>','<?= addslashes($medName) ?>')"
-                                 title="Click to enlarge">
-                                <img src="<?= $imgSrc ?>"
-                                     alt="<?= $medName ?>"
-                                     loading="lazy"
-                                     onerror="this.closest('.med-avatar').outerHTML='<div class=\'med-avatar\'><span class=\'avatar-emoji\'><?= $icon ?></span></div>'">
-                            </div>
+                        <?php if ($imgPath): ?>
+                        <!-- Has uploaded image → show it directly, no JS needed -->
+                        <div class="med-avatar has-img"
+                             onclick="openLightbox('<?= $imgPath ?>', '<?= $medName ?>')">
+                            <img src="<?= $imgPath ?>" alt="<?= $medName ?>" loading="lazy">
+                        </div>
                         <?php else: ?>
-                            <!-- No image → emoji fallback -->
-                            <div class="med-avatar">
-                                <span class="avatar-emoji"><?= $icon ?></span>
-                            </div>
+                        <!-- No image → show emoji fallback -->
+                        <div class="med-avatar">
+                            <span class="avatar-emoji"><?= $icon ?></span>
+                        </div>
                         <?php endif; ?>
-
                         <div>
                             <div class="med-name"><?= $medName ?></div>
-                            <div class="med-id">
-                                ID #<?= $row['id'] ?>
-                                <?php if ($imgExists): ?>
-                                    · <span class="med-photo-tag">📷 photo</span>
-                                <?php endif; ?>
-                            </div>
+                            <div class="med-id">ID #<?= $medId ?></div>
                         </div>
                     </div>
                 </td>
@@ -522,8 +490,8 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
 
                 <td>
                     <div class="action-cell">
-                        <a class="btn-edit" href="edit.php?id=<?= $row['id'] ?>">✏ Edit</a>
-                        <a class="btn-del"  href="delete.php?id=<?= $row['id'] ?>"
+                        <a class="btn-edit" href="edit.php?id=<?= $medId ?>">✏ Edit</a>
+                        <a class="btn-del"  href="delete.php?id=<?= $medId ?>"
                            onclick="return confirm('Delete <?= htmlspecialchars(addslashes($row['mname'])) ?>?')">✕ Del</a>
                     </div>
                 </td>
@@ -538,18 +506,22 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
         </div>
         <?php endif; ?>
     </div>
-
 </div>
 
 <?php if (isset($_GET['updated'])): ?>
 <div class="toast" id="toast">✔ Record updated successfully</div>
 <?php endif; ?>
+<?php if (isset($_GET['added'])): ?>
+<div class="toast" id="toast">✔ Medicine added successfully</div>
+<?php endif; ?>
 
 <script>
-// ── LIGHTBOX ──
-const lightbox    = document.getElementById('lightbox');
-const lbImg       = document.getElementById('lightbox-img');
-const lbCaption   = document.getElementById('lightbox-caption');
+// ══════════════════════════════════════════════════════════════
+//  LIGHTBOX
+// ══════════════════════════════════════════════════════════════
+const lightbox  = document.getElementById('lightbox');
+const lbImg     = document.getElementById('lightbox-img');
+const lbCaption = document.getElementById('lightbox-caption');
 
 function openLightbox(src, name) {
     lbImg.src = src;
@@ -562,15 +534,12 @@ function closeLightbox() {
     lightbox.classList.remove('open');
     document.body.style.overflow = '';
 }
-// Click backdrop to close
-lightbox.addEventListener('click', e => {
-    if (e.target === lightbox) closeLightbox();
-});
-document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeLightbox();
-});
+lightbox.addEventListener('click', e => { if (e.target === lightbox) closeLightbox(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
-// ── LIVE SEARCH ──
+// ══════════════════════════════════════════════════════════════
+//  LIVE SEARCH (client-side filter)
+// ══════════════════════════════════════════════════════════════
 const searchInput = document.getElementById('searchInput');
 const tableRows   = document.querySelectorAll('#tableBody tr');
 const badge       = document.getElementById('countBadge');
@@ -594,8 +563,8 @@ function filterTable(q) {
 
         if (match) {
             visible++;
-            const qty   = parseFloat(row.cells[3].querySelector('.qty-num')?.textContent.replace(/,/g,'') || 0);
-            const price = parseFloat(row.cells[4].textContent.replace(/[₱,]/g,'') || 0);
+            const qty   = parseFloat(row.cells[3]?.querySelector('.qty-num')?.textContent.replace(/,/g,'') || 0);
+            const price = parseFloat(row.cells[4]?.textContent.replace(/[₱,]/g,'') || 0);
             totalQty += qty;
             totalVal += qty * price;
         }
@@ -622,7 +591,9 @@ if (searchInput) {
     if (searchInput.value) filterTable(searchInput.value);
 }
 
-// ── TOAST ──
+// ══════════════════════════════════════════════════════════════
+//  TOAST AUTO-HIDE
+// ══════════════════════════════════════════════════════════════
 const toast = document.getElementById('toast');
 if (toast) {
     setTimeout(() => toast.classList.add('hide'), 3000);
