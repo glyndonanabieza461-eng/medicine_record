@@ -1,69 +1,71 @@
 <?php
 include 'db.php';
 
-$success = $error = '';
+$errors = [];
+$success = false;
 
-if (isset($_POST['submit'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $mname       = trim($_POST['mname'] ?? '');
+    $category    = trim($_POST['category'] ?? '');
+    $quantity    = (int)($_POST['quantity'] ?? 0);
+    $price       = (float)($_POST['price'] ?? 0);
+    $expiry_date = trim($_POST['expiry_date'] ?? '');
+    $supplier    = trim($_POST['supplier'] ?? '');
+    $image_path  = '';
 
-    // Sanitize inputs
-    $mname       = trim($_POST['mname']);
-    $category    = trim($_POST['category']);
-    $quantity    = intval($_POST['quantity']);
-    $price       = floatval($_POST['price']);
-    $expiry_date = $_POST['expiry_date'];
-    $supplier    = trim($_POST['supplier']);
+    // Validate
+    if (!$mname)    $errors[] = 'Medicine name is required.';
+    if (!$category) $errors[] = 'Category is required.';
+    if ($quantity < 0) $errors[] = 'Quantity cannot be negative.';
+    if ($price < 0)    $errors[] = 'Price cannot be negative.';
 
-    // Basic server-side validation
-    if (empty($mname) || empty($category) || empty($supplier)) {
-        $error = "Please fill in all required fields.";
-    } elseif ($quantity < 0 || $price < 0) {
-        $error = "Quantity and price must not be negative.";
-    } else {
+    // Handle image upload
+    if (!empty($_FILES['image']['name'])) {
+        $file     = $_FILES['image'];
+        $allowed  = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+        $maxSize  = 5 * 1024 * 1024; // 5MB
 
-        // IMAGE UPLOAD (optional — image column accepts NULL)
-        $image    = '';
-        $hasFile  = isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK;
+        if (!in_array($file['type'], $allowed)) {
+            $errors[] = 'Image must be JPG, PNG, WEBP, or GIF.';
+        } elseif ($file['size'] > $maxSize) {
+            $errors[] = 'Image must be under 5MB.';
+        } elseif ($file['error'] !== UPLOAD_ERR_OK) {
+            $errors[] = 'Image upload failed. Please try again.';
+        } else {
+            // Create uploads folder if it doesn't exist
+            $uploadDir = 'uploads/medicines/';
+            if (!is_dir($uploadDir)) {
+                mkdir($uploadDir, 0755, true);
+            }
 
-        if ($hasFile) {
-            $origName = $_FILES['image']['name'];
-            $tmpPath  = $_FILES['image']['tmp_name'];
-            $ext      = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-            $allowed  = ['jpg', 'jpeg', 'png', 'webp'];
+            // Unique filename: sanitized medicine name + timestamp
+            $ext       = pathinfo($file['name'], PATHINFO_EXTENSION);
+            $safeName  = preg_replace('/[^a-z0-9_-]/', '_', strtolower($mname));
+            $filename  = $safeName . '_' . time() . '.' . $ext;
+            $destPath  = $uploadDir . $filename;
 
-            if (!in_array($ext, $allowed)) {
-                $error = "Only JPG, JPEG, PNG, or WEBP files are allowed.";
-            } elseif ($_FILES['image']['size'] > 3 * 1024 * 1024) {
-                $error = "Image must be under 3 MB.";
+            if (move_uploaded_file($file['tmp_name'], $destPath)) {
+                // Save as web-accessible path (relative to project root)
+                $image_path = $destPath; // e.g. "uploads/medicines/paracetamol_1234.jpg"
             } else {
-                // Use a unique filename to prevent collisions / overwrites
-                $image  = uniqid('med_', true) . '.' . $ext;
-                $folder = "img/" . $image;
-
-                if (!is_dir('img')) mkdir('img', 0755, true);
-
-                if (!move_uploaded_file($tmpPath, $folder)) {
-                    $error = "Failed to upload image. Check folder permissions.";
-                    $image = '';
-                }
+                $errors[] = 'Could not save the image. Check server permissions.';
             }
         }
+    }
 
-        if (empty($error)) {
-            $stmt = $conn->prepare(
-                "INSERT INTO inventory (mname, category, quantity, price, expiry_date, supplier, image)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)"
-            );
-            $stmt->bind_param("ssissss", $mname, $category, $quantity, $price, $expiry_date, $supplier, $image);
+    // Insert if no errors
+    if (empty($errors)) {
+        $stmt = $conn->prepare(
+            "INSERT INTO inventory (mname, category, quantity, price, expiry_date, supplier, image)
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        );
+        $stmt->bind_param('ssissss', $mname, $category, $quantity, $price, $expiry_date, $supplier, $image_path);
 
-            if ($stmt->execute()) {
-                $success = "Medicine <strong>" . htmlspecialchars($mname) . "</strong> added successfully!";
-                // Clear fields after success
-                $mname = $category = $supplier = $expiry_date = '';
-                $quantity = $price = 0;
-            } else {
-                $error = "Database error: " . $conn->error;
-            }
-            $stmt->close();
+        if ($stmt->execute()) {
+            header('Location: index.php?added=1');
+            exit();
+        } else {
+            $errors[] = 'Database error: ' . $conn->error;
         }
     }
 }
@@ -73,7 +75,7 @@ if (isset($_POST['submit'])) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Add Medicine · MedInventory</title>
+<title>Add Medicine — MedInventory</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;700;800&family=Instrument+Sans:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
 <style>
@@ -90,7 +92,6 @@ if (isset($_POST['submit'])) {
     --warn-lt:   #fde8e3;
     --border:    #e8e4dc;
     --shadow:    0 1px 3px rgba(26,24,20,.06), 0 4px 16px rgba(26,24,20,.08);
-    --shadow-lg: 0 4px 8px rgba(26,24,20,.07), 0 16px 40px rgba(26,24,20,.12);
     --radius:    14px;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -100,22 +101,9 @@ body {
     background: var(--bg);
     color: var(--ink);
     min-height: 100vh;
-    display: flex;
-    flex-direction: column;
 }
 
-/* Subtle grid texture */
-body::before {
-    content: '';
-    position: fixed; inset: 0;
-    background-image:
-        linear-gradient(rgba(45,106,79,.035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(45,106,79,.035) 1px, transparent 1px);
-    background-size: 32px 32px;
-    pointer-events: none; z-index: 0;
-}
-
-/* ── NAV ── */
+/* NAV */
 .nav {
     position: sticky; top: 0; z-index: 100;
     background: rgba(247,245,240,.92);
@@ -125,276 +113,175 @@ body::before {
     display: flex; align-items: center; justify-content: space-between;
     height: 64px;
 }
-.brand { display: flex; align-items: center; gap: .7rem; text-decoration: none; }
+.brand { display: flex; align-items: center; gap: .7rem; text-decoration: none; color: inherit; }
 .brand-pill {
-    background: var(--accent); color: #fff; font-size: 1.1rem;
+    background: var(--accent); color: #fff; font-size: 1.15rem;
     width: 36px; height: 36px; border-radius: 10px;
     display: grid; place-items: center;
     box-shadow: 0 2px 8px rgba(45,106,79,.35);
 }
 .brand-name {
     font-family: 'Bricolage Grotesque', sans-serif;
-    font-weight: 800; font-size: 1.1rem; letter-spacing: -.02em; color: var(--ink);
+    font-weight: 800; font-size: 1.15rem; letter-spacing: -.02em;
 }
-.back-link {
+.btn-back {
     display: inline-flex; align-items: center; gap: .45rem;
-    font-size: .85rem; font-weight: 500; color: var(--ink2);
-    text-decoration: none; padding: .45rem 1rem;
-    border: 1px solid var(--border); border-radius: 9px;
-    background: transparent; transition: all .18s;
+    font-family: inherit; font-size: .875rem; font-weight: 600;
+    padding: .5rem 1.1rem; border-radius: 10px;
+    border: 1.5px solid var(--border); background: var(--surface);
+    color: var(--ink2); text-decoration: none;
+    transition: border-color .2s, color .2s;
 }
-.back-link:hover { color: var(--ink); border-color: rgba(45,106,79,.4); background: var(--accent-lt); }
+.btn-back:hover { border-color: var(--accent2); color: var(--accent); }
 
-/* ── PAGE LAYOUT ── */
-.page {
-    position: relative; z-index: 1;
-    flex: 1;
-    display: flex; flex-direction: column;
-    align-items: center;
-    padding: 3rem 1.5rem 5rem;
+/* LAYOUT */
+.main {
+    max-width: 860px; margin: 0 auto; padding: 2.5rem 2rem;
+    animation: fadeUp .5s ease both;
 }
-
-/* ── PAGE HEADER ── */
-.page-header {
-    text-align: center;
-    margin-bottom: 2.5rem;
-    animation: fadeDown .55s ease both;
-}
-.page-header h1 {
+.page-title {
     font-family: 'Bricolage Grotesque', sans-serif;
-    font-size: 2rem; font-weight: 800; letter-spacing: -.03em;
-    color: var(--ink); line-height: 1.15;
+    font-weight: 800; font-size: 1.8rem; letter-spacing: -.03em;
+    margin-bottom: .35rem;
 }
-.page-header p { font-size: .9rem; color: var(--ink2); margin-top: .4rem; }
+.page-sub { color: var(--ink2); font-size: .9rem; margin-bottom: 2rem; }
 
-/* ── CARD ── */
+/* CARD */
 .card {
-    width: 100%; max-width: 640px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    box-shadow: var(--shadow-lg);
-    overflow: hidden;
-    animation: fadeUp .6s .08s ease both;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 2rem;
 }
 
-/* Accent stripe */
-.card::before {
-    content: '';
-    display: block; height: 4px;
-    background: linear-gradient(90deg, var(--accent), var(--accent2), #a7c4b5);
+/* ERRORS */
+.error-box {
+    background: var(--warn-lt); border: 1px solid rgba(224,122,95,.3);
+    border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+    color: var(--warn); font-size: .875rem;
 }
+.error-box ul { padding-left: 1.2rem; }
+.error-box li { margin-top: .25rem; }
 
-.card-body { padding: 2.25rem 2.5rem 2.5rem; }
-
-/* ── ALERTS ── */
-.alert {
-    display: flex; align-items: flex-start; gap: .75rem;
-    padding: .9rem 1.1rem; border-radius: 10px;
-    margin-bottom: 1.75rem; font-size: .875rem; font-weight: 500;
-    line-height: 1.5;
-}
-.alert-success { background: var(--accent-lt); border: 1px solid rgba(45,106,79,.25); color: var(--accent); }
-.alert-error   { background: var(--warn-lt);   border: 1px solid rgba(224,122,95,.3);  color: var(--warn);   animation: shake .4s ease; }
-.alert-icon    { font-size: 1.1rem; flex-shrink: 0; margin-top: .05rem; }
-
-/* ── FORM GRID ── */
+/* FORM GRID */
 .form-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1.25rem;
 }
-.field-full { grid-column: 1 / -1; }
+.form-grid .full { grid-column: 1 / -1; }
 
-/* ── FIELD ── */
 .field { display: flex; flex-direction: column; gap: .45rem; }
-.field-label {
-    font-size: .72rem; font-weight: 700;
-    letter-spacing: .07em; text-transform: uppercase;
-    color: var(--ink2);
-    display: flex; align-items: center; gap: .4rem;
+.field label {
+    font-size: .78rem; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--ink2);
 }
-.req { color: var(--accent); }
+.field input,
+.field select {
+    padding: .65rem .9rem;
+    border: 1.5px solid var(--border); border-radius: 10px;
+    font-family: inherit; font-size: .9rem; color: var(--ink);
+    background: var(--bg); outline: none;
+    transition: border-color .2s, box-shadow .2s, background .2s;
+}
+.field input:focus,
+.field select:focus {
+    border-color: var(--accent2);
+    box-shadow: 0 0 0 3px rgba(82,183,136,.15);
+    background: var(--surface);
+}
+.field input::placeholder { color: var(--ink3); }
 
-.field-input {
-    width: 100%;
-    background: #faf9f7;
-    border: 1.5px solid var(--border);
-    border-radius: 10px;
-    padding: .78rem 1rem;
-    color: var(--ink);
-    font-family: 'Instrument Sans', sans-serif;
-    font-size: .9rem;
-    outline: none;
-    transition: border-color .2s, background .2s, box-shadow .2s;
-    -webkit-appearance: none;
-}
-.field-input::placeholder { color: var(--ink3); }
-.field-input:hover { background: #f5f4f1; border-color: #ccc8be; }
-.field-input:focus {
-    border-color: var(--accent);
-    background: #fff;
-    box-shadow: 0 0 0 3px rgba(45,106,79,.12);
-}
-
-/* currency wrapper */
-.input-wrap { position: relative; }
-.input-prefix {
-    position: absolute; left: 1rem; top: 50%; transform: translateY(-50%);
-    color: var(--accent2); font-weight: 700; font-size: .9rem; pointer-events: none;
-}
-.input-wrap .field-input { padding-left: 1.85rem; }
-
-/* date picker */
-input[type="date"].field-input::-webkit-calendar-picker-indicator {
-    opacity: .45; cursor: pointer;
-    filter: sepia(.5) saturate(4) hue-rotate(110deg);
-}
-
-/* ── IMAGE UPLOAD ZONE ── */
+/* ── IMAGE UPLOAD ── */
 .upload-zone {
-    border: 2px dashed var(--border);
-    border-radius: 12px;
-    background: #faf9f7;
-    padding: 1.5rem 1rem;
-    text-align: center;
-    cursor: pointer;
+    border: 2px dashed var(--border); border-radius: 12px;
+    padding: 1.75rem; text-align: center;
+    cursor: pointer; background: var(--bg);
     transition: border-color .2s, background .2s;
     position: relative;
-    overflow: hidden;
 }
-.upload-zone:hover, .upload-zone.drag-over {
+.upload-zone:hover,
+.upload-zone.dragover {
     border-color: var(--accent2);
     background: var(--accent-lt);
 }
 .upload-zone input[type="file"] {
-    position: absolute; inset: 0;
-    opacity: 0; cursor: pointer; font-size: 0;
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%;
 }
 .upload-icon { font-size: 2rem; display: block; margin-bottom: .5rem; }
 .upload-label {
-    font-size: .875rem; font-weight: 600; color: var(--ink2);
-    display: block; margin-bottom: .2rem;
+    font-size: .875rem; color: var(--ink2); line-height: 1.5;
 }
-.upload-sub { font-size: .75rem; color: var(--ink3); }
+.upload-label strong { color: var(--accent); font-weight: 600; }
+.upload-hint { font-size: .75rem; color: var(--ink3); margin-top: .3rem; }
 
-/* Preview */
+/* Preview area */
 .preview-wrap {
-    margin-top: 1rem;
-    display: none;
-    position: relative;
+    display: none; margin-top: 1rem;
+    border-radius: 12px; overflow: hidden;
+    border: 1.5px solid var(--accent2);
+    position: relative; background: #000;
+    max-height: 240px;
 }
 .preview-wrap.show { display: block; }
-#imgPreview {
-    width: 100%;
-    max-height: 200px;
-    object-fit: cover;
-    border-radius: 10px;
-    display: block;
-    border: 1.5px solid var(--border);
+.preview-wrap img {
+    width: 100%; max-height: 240px;
+    object-fit: contain; display: block;
 }
 .preview-remove {
     position: absolute; top: .5rem; right: .5rem;
-    background: rgba(26,24,20,.65);
-    color: #fff; border: none; border-radius: 50%;
-    width: 28px; height: 28px;
-    display: grid; place-items: center;
-    font-size: .85rem; cursor: pointer;
+    background: rgba(0,0,0,.6); color: #fff;
+    border: none; border-radius: 50%;
+    width: 28px; height: 28px; font-size: .85rem;
+    cursor: pointer; display: grid; place-items: center;
     transition: background .15s;
 }
 .preview-remove:hover { background: var(--warn); }
-
-/* ── DIVIDER ── */
-.divider {
-    border: none; border-top: 1px solid var(--border);
-    position: relative; margin: 1.75rem 0 1.5rem;
-}
-.divider::after {
-    content: attr(data-label);
-    position: absolute; top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    background: var(--surface);
-    padding: 0 .9rem;
-    font-size: .65rem; font-weight: 700;
-    letter-spacing: .1em; color: var(--ink3);
-    text-transform: uppercase;
+.preview-name {
+    background: rgba(0,0,0,.55); color: #fff;
+    font-size: .75rem; padding: .35rem .75rem;
+    font-weight: 600;
 }
 
-/* ── SUBMIT ── */
+/* SUBMIT */
+.form-actions {
+    display: flex; align-items: center; justify-content: flex-end;
+    gap: .75rem; margin-top: 1.75rem; padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+}
+.btn-cancel {
+    display: inline-flex; align-items: center;
+    font-family: inherit; font-size: .9rem; font-weight: 600;
+    padding: .65rem 1.3rem; border-radius: 10px;
+    border: 1.5px solid var(--border); background: transparent;
+    color: var(--ink2); cursor: pointer; text-decoration: none;
+    transition: border-color .15s;
+}
+.btn-cancel:hover { border-color: var(--ink3); }
 .btn-submit {
-    width: 100%;
-    display: flex; align-items: center; justify-content: center; gap: .55rem;
-    background: linear-gradient(135deg, var(--accent) 0%, #1f5c3e 100%);
-    color: #fff;
-    font-family: 'Bricolage Grotesque', sans-serif;
-    font-size: 1rem; font-weight: 700;
-    padding: .95rem 1.5rem;
-    border: none; border-radius: 11px;
-    cursor: pointer;
-    box-shadow: 0 3px 12px rgba(45,106,79,.35), inset 0 1px 0 rgba(255,255,255,.12);
+    display: inline-flex; align-items: center; gap: .5rem;
+    font-family: 'Bricolage Grotesque', sans-serif; font-size: .9rem; font-weight: 700;
+    padding: .7rem 1.8rem; border-radius: 10px;
+    border: none; background: var(--accent); color: #fff;
+    cursor: pointer; box-shadow: 0 2px 8px rgba(45,106,79,.3);
     transition: transform .15s, box-shadow .15s;
-    position: relative; overflow: hidden;
-    margin-top: 1.75rem;
 }
-.btn-submit:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(45,106,79,.45), inset 0 1px 0 rgba(255,255,255,.12);
-}
+.btn-submit:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(45,106,79,.4); }
 .btn-submit:active { transform: translateY(0); }
-.btn-submit .ripple {
-    position: absolute; border-radius: 50%;
-    background: rgba(255,255,255,.25);
-    transform: scale(0);
-    animation: ripple .55s linear;
-    pointer-events: none;
+
+/* DIVIDER */
+.section-divider {
+    font-size: .72rem; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--ink3);
+    grid-column: 1 / -1; padding-top: .5rem;
+    border-top: 1px solid var(--border); margin-top: .25rem;
 }
 
-/* ── PROGRESS BAR ── */
-.progress-bar { height: 3px; background: var(--border); }
-.progress-fill {
-    height: 100%; width: 0%;
-    background: linear-gradient(90deg, var(--accent), var(--accent2));
-    transition: width .3s ease;
-}
+@keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
 
-/* ── FOOTER LINK ── */
-.form-footer {
-    text-align: center; margin-top: 1.5rem;
-    font-size: .875rem; color: var(--ink2);
-    animation: fadeUp .6s .2s ease both;
-}
-.form-footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
-.form-footer a:hover { text-decoration: underline; }
-
-/* ── FIELD ANIMATIONS ── */
-.field { animation: fadeUp .45s ease both; }
-.field:nth-child(1) { animation-delay: .1s; }
-.field:nth-child(2) { animation-delay: .14s; }
-.field:nth-child(3) { animation-delay: .18s; }
-.field:nth-child(4) { animation-delay: .22s; }
-.field:nth-child(5) { animation-delay: .26s; }
-.field:nth-child(6) { animation-delay: .30s; }
-.field:nth-child(7) { animation-delay: .34s; }
-
-/* ── KEYFRAMES ── */
-@keyframes fadeDown { from { opacity:0; transform:translateY(-14px); } to { opacity:1; transform:translateY(0); } }
-@keyframes fadeUp   { from { opacity:0; transform:translateY(18px);  } to { opacity:1; transform:translateY(0); } }
-@keyframes shake    {
-    0%,100% { transform:translateX(0); }
-    20%     { transform:translateX(-6px); }
-    40%     { transform:translateX(6px); }
-    60%     { transform:translateX(-4px); }
-    80%     { transform:translateX(4px); }
-}
-@keyframes ripple   { to { transform:scale(4); opacity:0; } }
-
-/* ── RESPONSIVE ── */
-@media (max-width: 560px) {
+@media (max-width: 600px) {
     .form-grid { grid-template-columns: 1fr; }
-    .field-full { grid-column: 1; }
-    .card-body { padding: 1.75rem 1.25rem; }
-    .page-header h1 { font-size: 1.6rem; }
-    .nav { padding: 0 1rem; }
+    .form-grid .full { grid-column: 1; }
+    .main { padding: 1.5rem 1rem; }
 }
 </style>
 </head>
@@ -406,221 +293,172 @@ input[type="date"].field-input::-webkit-calendar-picker-indicator {
         <div class="brand-pill">💊</div>
         <span class="brand-name">MedInventory</span>
     </a>
-    <a href="index.php" class="back-link">← Back to List</a>
+    <a href="index.php" class="btn-back">← Back to List</a>
 </nav>
 
-<!-- PAGE -->
-<div class="page">
+<!-- MAIN -->
+<div class="main">
+    <div class="page-title">Add New Medicine</div>
+    <p class="page-sub">Fill in the details below. Fields marked * are required.</p>
 
-    <div class="page-header">
-        <h1>➕ Add New Medicine</h1>
-        <p>Fill in the details below to register a medicine to the inventory.</p>
+    <?php if (!empty($errors)): ?>
+    <div class="error-box">
+        <strong>Please fix the following:</strong>
+        <ul><?php foreach ($errors as $e): ?><li><?= htmlspecialchars($e) ?></li><?php endforeach; ?></ul>
     </div>
+    <?php endif; ?>
 
     <div class="card">
-        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <form method="POST" enctype="multipart/form-data" id="addForm">
 
-        <div class="card-body">
+            <div class="form-grid">
 
-            <!-- ALERTS -->
-            <?php if ($success): ?>
-            <div class="alert alert-success">
-                <span class="alert-icon">✔</span>
-                <span><?= $success ?></span>
-            </div>
-            <?php endif; ?>
+                <!-- Medicine Info -->
+                <div class="section-divider">Medicine Information</div>
 
-            <?php if ($error): ?>
-            <div class="alert alert-error">
-                <span class="alert-icon">⚠</span>
-                <span><?= htmlspecialchars($error) ?></span>
-            </div>
-            <?php endif; ?>
-
-            <!-- FORM -->
-            <form method="POST" enctype="multipart/form-data" id="addForm" novalidate>
-
-                <div class="form-grid">
-
-                    <!-- NAME -->
-                    <div class="field field-full">
-                        <label class="field-label">
-                            💊 Medicine Name <span class="req">*</span>
-                        </label>
-                        <input class="field-input" type="text" name="mname"
-                               placeholder="e.g. Paracetamol 500mg"
-                               value="<?= htmlspecialchars($mname ?? '') ?>" required>
-                    </div>
-
-                    <!-- CATEGORY -->
-                    <div class="field">
-                        <label class="field-label">
-                            🏷 Category <span class="req">*</span>
-                        </label>
-                        <input class="field-input" type="text" name="category"
-                               placeholder="e.g. Analgesic"
-                               value="<?= htmlspecialchars($category ?? '') ?>" required>
-                    </div>
-
-                    <!-- SUPPLIER -->
-                    <div class="field">
-                        <label class="field-label">
-                            🏭 Supplier <span class="req">*</span>
-                        </label>
-                        <input class="field-input" type="text" name="supplier"
-                               placeholder="e.g. PharmaCo Inc."
-                               value="<?= htmlspecialchars($supplier ?? '') ?>" required>
-                    </div>
-
-                    <!-- QUANTITY -->
-                    <div class="field">
-                        <label class="field-label">📦 Quantity</label>
-                        <input class="field-input" type="number" name="quantity"
-                               min="0" placeholder="0"
-                               value="<?= isset($quantity) && $quantity > 0 ? $quantity : '' ?>">
-                    </div>
-
-                    <!-- PRICE -->
-                    <div class="field">
-                        <label class="field-label">💰 Price</label>
-                        <div class="input-wrap">
-                            <span class="input-prefix">₱</span>
-                            <input class="field-input" type="number" name="price"
-                                   min="0" step="0.01" placeholder="0.00"
-                                   value="<?= isset($price) && $price > 0 ? $price : '' ?>">
-                        </div>
-                    </div>
-
-                    <!-- EXPIRY DATE -->
-                    <div class="field field-full">
-                        <label class="field-label">📅 Expiry Date</label>
-                        <input class="field-input" type="date" name="expiry_date"
-                               value="<?= htmlspecialchars($expiry_date ?? '') ?>">
-                    </div>
-
+                <div class="field full">
+                    <label for="mname">Medicine Name *</label>
+                    <input type="text" id="mname" name="mname"
+                           placeholder="e.g. Paracetamol 500mg"
+                           value="<?= htmlspecialchars($_POST['mname'] ?? '') ?>"
+                           required autocomplete="off">
                 </div>
 
-                <hr class="divider" data-label="Medicine Photo (Optional)">
-
-                <!-- IMAGE UPLOAD -->
                 <div class="field">
+                    <label for="category">Category *</label>
+                    <select id="category" name="category" required>
+                        <option value="">— Select category —</option>
+                        <?php
+                        $cats = ['Analgesic / Pain Relief','Antibiotic','Vitamin / Supplement',
+                                 'Antihistamine / Allergy','Cardiovascular / Heart','Diabetes',
+                                 'Antacid / Gastrointestinal','Antiviral','Antifungal','Other'];
+                        $selected = $_POST['category'] ?? '';
+                        foreach ($cats as $c):
+                        ?>
+                        <option value="<?= $c ?>" <?= $selected === $c ? 'selected' : '' ?>><?= $c ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label for="supplier">Supplier</label>
+                    <input type="text" id="supplier" name="supplier"
+                           placeholder="e.g. PharmaCorp"
+                           value="<?= htmlspecialchars($_POST['supplier'] ?? '') ?>">
+                </div>
+
+                <!-- Stock & Pricing -->
+                <div class="section-divider">Stock & Pricing</div>
+
+                <div class="field">
+                    <label for="quantity">Quantity *</label>
+                    <input type="number" id="quantity" name="quantity" min="0"
+                           placeholder="0"
+                           value="<?= htmlspecialchars($_POST['quantity'] ?? '') ?>"
+                           required>
+                </div>
+
+                <div class="field">
+                    <label for="price">Price per Unit (₱) *</label>
+                    <input type="number" id="price" name="price" min="0" step="0.01"
+                           placeholder="0.00"
+                           value="<?= htmlspecialchars($_POST['price'] ?? '') ?>"
+                           required>
+                </div>
+
+                <div class="field">
+                    <label for="expiry_date">Expiry Date</label>
+                    <input type="date" id="expiry_date" name="expiry_date"
+                           value="<?= htmlspecialchars($_POST['expiry_date'] ?? '') ?>">
+                </div>
+
+                <!-- Image Upload -->
+                <div class="section-divider">Medicine Photo</div>
+
+                <div class="field full">
+                    <label>Upload Image <span style="color:var(--ink3);font-weight:400;text-transform:none;letter-spacing:0">(optional · JPG, PNG, WEBP, GIF · max 5MB)</span></label>
+
                     <div class="upload-zone" id="uploadZone">
                         <input type="file" name="image" id="imageInput"
-                               accept=".jpg,.jpeg,.png,.webp"
-                               onchange="handleImageSelect(event)">
+                               accept="image/jpeg,image/png,image/webp,image/gif">
                         <span class="upload-icon">📷</span>
-                        <span class="upload-label">Click or drag &amp; drop an image</span>
-                        <span class="upload-sub">JPG, PNG, WEBP · Max 3 MB · Optional</span>
+                        <div class="upload-label">
+                            <strong>Click to upload</strong> or drag & drop a photo here
+                        </div>
+                        <div class="upload-hint">Recommended: clear photo of the medicine box or tablet</div>
                     </div>
 
-                    <!-- PREVIEW -->
+                    <!-- Live preview shown as soon as user picks a file -->
                     <div class="preview-wrap" id="previewWrap">
-                        <img id="imgPreview" src="" alt="Preview">
-                        <button type="button" class="preview-remove" onclick="removeImage()" title="Remove image">✕</button>
+                        <button type="button" class="preview-remove" id="removeImg" title="Remove image">✕</button>
+                        <img id="previewImg" src="" alt="Preview">
+                        <div class="preview-name" id="previewName"></div>
                     </div>
                 </div>
 
-                <!-- SUBMIT -->
-                <button type="submit" name="submit" class="btn-submit" id="submitBtn">
-                    ＋ Add to Inventory
-                </button>
+            </div><!-- /form-grid -->
 
-            </form>
-        </div>
+            <div class="form-actions">
+                <a href="index.php" class="btn-cancel">Cancel</a>
+                <button type="submit" class="btn-submit">＋ Add Medicine</button>
+            </div>
+
+        </form>
     </div>
-
-    <div class="form-footer">
-        Want to see all medicines?
-        <a href="index.php">View Medicine List →</a>
-    </div>
-
 </div>
 
 <script>
-// ── LIVE PROGRESS BAR ──
-const inputs     = document.querySelectorAll('.field-input');
-const fill       = document.getElementById('progressFill');
-const required   = ['mname','category','supplier']; // required field names
+// ══════════════════════════════════════════════════════════════
+//  IMAGE PREVIEW — shows thumbnail as soon as file is chosen
+// ══════════════════════════════════════════════════════════════
+const imageInput  = document.getElementById('imageInput');
+const previewWrap = document.getElementById('previewWrap');
+const previewImg  = document.getElementById('previewImg');
+const previewName = document.getElementById('previewName');
+const uploadZone  = document.getElementById('uploadZone');
+const removeBtn   = document.getElementById('removeImg');
 
-function updateProgress() {
-    const total  = inputs.length;
-    const filled = [...inputs].filter(f => f.value.trim() !== '').length;
-    fill.style.width = (filled / total * 100) + '%';
-}
-inputs.forEach(f => f.addEventListener('input', updateProgress));
-
-// ── IMAGE PREVIEW ──
-function handleImageSelect(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    if (file.size > 3 * 1024 * 1024) {
-        alert('Image is too large. Please choose a file under 3 MB.');
-        e.target.value = '';
-        return;
-    }
-
+function showPreview(file) {
+    if (!file || !file.type.startsWith('image/')) return;
     const reader = new FileReader();
-    reader.onload = ev => {
-        document.getElementById('imgPreview').src = ev.target.result;
-        document.getElementById('previewWrap').classList.add('show');
-        document.getElementById('uploadZone').style.display = 'none';
+    reader.onload = e => {
+        previewImg.src = e.target.result;
+        previewName.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+        previewWrap.classList.add('show');
+        uploadZone.style.display = 'none';
     };
     reader.readAsDataURL(file);
 }
 
-function removeImage() {
-    document.getElementById('imageInput').value = '';
-    document.getElementById('imgPreview').src   = '';
-    document.getElementById('previewWrap').classList.remove('show');
-    document.getElementById('uploadZone').style.display = '';
-}
+imageInput.addEventListener('change', () => {
+    if (imageInput.files[0]) showPreview(imageInput.files[0]);
+});
 
-// ── DRAG & DROP ──
-const zone = document.getElementById('uploadZone');
-zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
-zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-zone.addEventListener('drop', e => {
+// Remove / reset
+removeBtn.addEventListener('click', () => {
+    imageInput.value = '';
+    previewImg.src   = '';
+    previewWrap.classList.remove('show');
+    uploadZone.style.display = '';
+});
+
+// Drag-and-drop
+uploadZone.addEventListener('dragover', e => {
     e.preventDefault();
-    zone.classList.remove('drag-over');
+    uploadZone.classList.add('dragover');
+});
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadZone.classList.remove('dragover');
     const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-        // Inject into input
+    if (file) {
+        // Assign to the input so it's included in the form POST
         const dt = new DataTransfer();
         dt.items.add(file);
-        document.getElementById('imageInput').files = dt.files;
-        handleImageSelect({ target: { files: [file], value: '' } });
+        imageInput.files = dt.files;
+        showPreview(file);
     }
-});
-
-// ── RIPPLE ──
-document.getElementById('submitBtn').addEventListener('click', function(e) {
-    const btn    = this;
-    const circle = document.createElement('span');
-    const rect   = btn.getBoundingClientRect();
-    const size   = Math.max(rect.width, rect.height);
-    circle.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX-rect.left-size/2}px;top:${e.clientY-rect.top-size/2}px;`;
-    circle.classList.add('ripple');
-    btn.appendChild(circle);
-    setTimeout(() => circle.remove(), 600);
-});
-
-// ── CLIENT-SIDE VALIDATION ──
-document.getElementById('addForm').addEventListener('submit', function(e) {
-    let valid = true;
-    required.forEach(name => {
-        const el = this.querySelector(`[name="${name}"]`);
-        if (!el || !el.value.trim()) {
-            valid = false;
-            el.style.borderColor = '#e07a5f';
-            el.style.boxShadow   = '0 0 0 3px rgba(224,122,95,.15)';
-            el.addEventListener('input', () => {
-                el.style.borderColor = '';
-                el.style.boxShadow   = '';
-            }, { once: true });
-        }
-    });
-    if (!valid) e.preventDefault();
 });
 </script>
 </body>

@@ -2,71 +2,12 @@
 include 'db.php';
 
 // ══════════════════════════════════════════════════════════════
-//  INLINE API PROXY  →  index.php?proxy=img&name=Paracetamol
-//  Called by JS fetch — key stays server-side, never in browser
-// ══════════════════════════════════════════════════════════════
-if (isset($_GET['proxy']) && $_GET['proxy'] === 'img') {
-    header('Content-Type: application/json');
-    $name = trim($_GET['name'] ?? '');
-    if (strlen($name) < 2) { echo json_encode(['url' => '']); exit(); }
-
-    $ANTHROPIC_KEY = 'YOUR_ANTHROPIC_API_KEY'; // <-- replace with your key
-
-    $prompt = "You are a pharmacy image assistant. Given a medicine name, return ONLY a valid JSON object with no markdown, no extra text:\n"
-            . "{\n"
-            . "  \"url\": \"<a real, publicly accessible image URL of this medicine — prefer drugs.com, rxlist.com, or any CDN-hosted pill/package photo. Must be a direct .jpg/.png/.webp URL that does not require login.>\"\n"
-            . "}\n"
-            . "If you cannot find a reliable image URL, return {\"url\": \"\"}.\n"
-            . "Medicine: \"" . addslashes($name) . "\"";
-
-    $payload = json_encode([
-        'model'      => 'claude-sonnet-4-20250514',
-        'max_tokens' => 300,
-        'messages'   => [['role' => 'user', 'content' => $prompt]]
-    ]);
-
-    $ch = curl_init('https://api.anthropic.com/v1/messages');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => $payload,
-        CURLOPT_HTTPHEADER     => [
-            'Content-Type: application/json',
-            'x-api-key: ' . $ANTHROPIC_KEY,
-            'anthropic-version: 2023-06-01',
-        ],
-        CURLOPT_TIMEOUT        => 10,
-    ]);
-    $resp = curl_exec($ch);
-    curl_close($ch);
-
-    $data = json_decode($resp, true);
-    $text = '';
-    foreach (($data['content'] ?? []) as $block) {
-        if ($block['type'] === 'text') $text .= $block['text'];
-    }
-    $text    = preg_replace('/```json|```/', '', trim($text));
-    $parsed  = json_decode($text, true);
-    $url     = $parsed['url'] ?? '';
-
-    // Validate the URL is actually an image endpoint
-    if (!preg_match('/\.(jpe?g|png|webp|gif)(\?.*)?$/i', $url)) {
-        $url = '';
-    }
-
-    echo json_encode(['url' => $url]);
-    exit();
-}
-
-// ══════════════════════════════════════════════════════════════
 //  MAIN PAGE
 // ══════════════════════════════════════════════════════════════
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 
 if ($search !== '') {
-    $stmt = $conn->prepare("SELECT * FROM inventory WHERE mname LIKE ? OR category LIKE ? OR supplier LIKE ? ORDER BY id DESC");
-    $like = "%$search%";
-    $stmt->bind_param("sss", $like, $like, $like);
+    $stmt = $conn->prepare("SELECT * FROM inventory ORDER BY id DESC");
     $stmt->execute();
     $result = $stmt->get_result();
 } else {
@@ -245,7 +186,7 @@ tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: #f9f8f5; }
 td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
 
-/* ── MEDICINE AVATAR (auto-image) ── */
+/* MEDICINE AVATAR */
 .med-cell { display: flex; align-items: center; gap: .85rem; }
 
 .med-avatar {
@@ -257,20 +198,7 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
     background: var(--accent-lt);
     display: grid; place-items: center;
     transition: border-color .2s, transform .2s;
-    cursor: default;
 }
-
-/* Skeleton shimmer while image loads */
-.med-avatar.loading {
-    background: linear-gradient(90deg, #e8e4dc 25%, #f0ede6 50%, #e8e4dc 75%);
-    background-size: 200% 100%;
-    animation: shimmer 1.4s infinite;
-}
-@keyframes shimmer {
-    0%   { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
-}
-
 .med-avatar.has-img {
     border-color: rgba(45,106,79,.25);
     cursor: zoom-in;
@@ -293,31 +221,11 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
 .med-avatar img {
     width: 100%; height: 100%;
     object-fit: cover; display: block;
-    opacity: 0;
-    transition: opacity .35s ease;
 }
-.med-avatar img.loaded { opacity: 1; }
-
 .avatar-emoji { font-size: 1.45rem; line-height: 1; user-select: none; }
-
-/* AI badge — shows on avatar while fetching */
-.ai-badge {
-    position: absolute; bottom: 2px; right: 2px;
-    font-size: .5rem; font-weight: 800; letter-spacing: .03em;
-    background: var(--accent); color: #fff;
-    padding: 1px 4px; border-radius: 4px;
-    opacity: 0; transition: opacity .3s;
-    pointer-events: none;
-}
-.med-avatar.loading .ai-badge { opacity: 1; }
 
 .med-name { font-weight: 600; color: var(--ink); line-height: 1.3; }
 .med-id   { font-size: .72rem; color: var(--ink3); margin-top: 1px; }
-.med-ai-tag {
-    display: inline-block; margin-top: 3px;
-    font-size: .62rem; color: var(--accent2); font-weight: 700;
-    letter-spacing: .03em;
-}
 
 /* CATEGORY */
 .cat-badge {
@@ -526,6 +434,8 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
                 $delay   = min($i * 40, 400);
                 $medName = htmlspecialchars($row['mname']);
                 $medId   = (int)$row['id'];
+                // Check if uploaded image exists
+                $imgPath = !empty($row['image']) ? htmlspecialchars($row['image']) : '';
             ?>
             <tr data-name="<?= htmlspecialchars(strtolower($row['mname'])) ?>"
                 data-cat="<?= htmlspecialchars(strtolower($row['category'])) ?>"
@@ -534,24 +444,24 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
 
                 <td style="color:var(--ink3);font-size:.8rem;font-weight:600"><?= $medId ?></td>
 
-                <!-- ── MEDICINE CELL with auto-AI image ── -->
+                <!-- MEDICINE CELL -->
                 <td>
                     <div class="med-cell">
-                        <!--
-                            data-medname  → sent to the proxy to look up the image
-                            The JS below reads this and injects the <img> automatically.
-                        -->
-                        <div class="med-avatar loading"
-                             id="avatar-<?= $medId ?>"
-                             data-medname="<?= $medName ?>"
-                             data-icon="<?= $icon ?>">
-                            <span class="avatar-emoji" id="emoji-<?= $medId ?>"><?= $icon ?></span>
-                            <span class="ai-badge">AI</span>
+                        <?php if ($imgPath): ?>
+                        <!-- Has uploaded image → show it directly, no JS needed -->
+                        <div class="med-avatar has-img"
+                             onclick="openLightbox('<?= $imgPath ?>', '<?= $medName ?>')">
+                            <img src="<?= $imgPath ?>" alt="<?= $medName ?>" loading="lazy">
                         </div>
+                        <?php else: ?>
+                        <!-- No image → show emoji fallback -->
+                        <div class="med-avatar">
+                            <span class="avatar-emoji"><?= $icon ?></span>
+                        </div>
+                        <?php endif; ?>
                         <div>
                             <div class="med-name"><?= $medName ?></div>
                             <div class="med-id">ID #<?= $medId ?></div>
-                            <span class="med-ai-tag" id="aitag-<?= $medId ?>"></span>
                         </div>
                     </div>
                 </td>
@@ -601,95 +511,11 @@ td { padding: .85rem 1.1rem; font-size: .9rem; vertical-align: middle; }
 <?php if (isset($_GET['updated'])): ?>
 <div class="toast" id="toast">✔ Record updated successfully</div>
 <?php endif; ?>
+<?php if (isset($_GET['added'])): ?>
+<div class="toast" id="toast">✔ Medicine added successfully</div>
+<?php endif; ?>
 
 <script>
-// ══════════════════════════════════════════════════════════════
-//  AUTO-IMAGE LOADER
-//  For each avatar, call the PHP proxy → get image URL → inject
-//  Images are cached in sessionStorage so refreshing is instant.
-// ══════════════════════════════════════════════════════════════
-(function () {
-    const CACHE_PREFIX = 'medimg_';
-    const avatars = document.querySelectorAll('.med-avatar[data-medname]');
-
-    // Process avatars in batches to avoid hammering the API
-    const BATCH = 3;
-    let queue = Array.from(avatars);
-
-    async function loadAvatar(avatar) {
-        const name   = avatar.dataset.medname;
-        const id     = avatar.id.replace('avatar-', '');
-        const icon   = avatar.dataset.icon || '💉';
-        const emojiEl = document.getElementById('emoji-' + id);
-        const aiTag   = document.getElementById('aitag-' + id);
-        const cacheKey = CACHE_PREFIX + name.toLowerCase().trim();
-
-        // Check sessionStorage cache first
-        const cached = sessionStorage.getItem(cacheKey);
-        if (cached !== null) {
-            if (cached) applyImage(avatar, id, emojiEl, aiTag, cached, name);
-            else        fallback(avatar, emojiEl);
-            return;
-        }
-
-        try {
-            const res  = await fetch(`index.php?proxy=img&name=${encodeURIComponent(name)}`);
-            const data = await res.json();
-            const url  = data.url || '';
-            sessionStorage.setItem(cacheKey, url);
-
-            if (url) applyImage(avatar, id, emojiEl, aiTag, url, name);
-            else     fallback(avatar, emojiEl);
-        } catch (e) {
-            sessionStorage.setItem(cacheKey, '');
-            fallback(avatar, emojiEl);
-        }
-    }
-
-    function applyImage(avatar, id, emojiEl, aiTag, url, name) {
-        const img = document.createElement('img');
-        img.alt   = name;
-
-        img.onload = () => {
-            img.classList.add('loaded');
-            if (emojiEl) emojiEl.style.display = 'none';
-            avatar.classList.remove('loading');
-            avatar.classList.add('has-img');
-            avatar.style.cursor = 'zoom-in';
-            avatar.onclick = () => openLightbox(url, name);
-            if (aiTag) { aiTag.textContent = '✦ AI image'; }
-        };
-
-        img.onerror = () => {
-            sessionStorage.setItem(CACHE_PREFIX + name.toLowerCase().trim(), '');
-            fallback(avatar, emojiEl);
-        };
-
-        img.src = url;
-        avatar.insertBefore(img, avatar.querySelector('.ai-badge'));
-    }
-
-    function fallback(avatar, emojiEl) {
-        avatar.classList.remove('loading');
-        if (emojiEl) emojiEl.style.display = '';
-    }
-
-    async function processBatch() {
-        if (!queue.length) return;
-        const batch = queue.splice(0, BATCH);
-        await Promise.all(batch.map(loadAvatar));
-        // Small gap between batches so the server isn't slammed
-        setTimeout(processBatch, 600);
-    }
-
-    // Start after page is painted
-    if ('requestIdleCallback' in window) {
-        requestIdleCallback(processBatch);
-    } else {
-        setTimeout(processBatch, 300);
-    }
-})();
-
 // ══════════════════════════════════════════════════════════════
 //  LIGHTBOX
 // ══════════════════════════════════════════════════════════════
@@ -712,7 +538,7 @@ lightbox.addEventListener('click', e => { if (e.target === lightbox) closeLightb
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
 // ══════════════════════════════════════════════════════════════
-//  LIVE SEARCH
+//  LIVE SEARCH (client-side filter)
 // ══════════════════════════════════════════════════════════════
 const searchInput = document.getElementById('searchInput');
 const tableRows   = document.querySelectorAll('#tableBody tr');
@@ -766,7 +592,7 @@ if (searchInput) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  TOAST
+//  TOAST AUTO-HIDE
 // ══════════════════════════════════════════════════════════════
 const toast = document.getElementById('toast');
 if (toast) {
